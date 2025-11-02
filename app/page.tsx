@@ -1,10 +1,9 @@
 "use client"
 
 import type React from "react"
-
 import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
-import { Upload, FileText, Sparkles, User, CheckCircle2, Trash2, Clock } from "lucide-react"
+import { Upload, FileText, Sparkles, User, CheckCircle2, Trash2, Clock, Database, ExternalLink } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { Label } from "@/components/ui/label"
@@ -14,12 +13,24 @@ import { parseTranscript, detectFormat } from "@/lib/parseTranscript"
 import { extractTeamFromTranscript } from "@/lib/extractTeamFromTranscript"
 import { DEMO_KB, DEMO_TRANSCRIPT } from "@/lib/fixtures"
 import { toast } from "sonner"
+import { fetchSavedTranscripts } from "@/lib/fetchSavedTranscripts" // Import fetchSavedTranscripts
 
 type SavedTranscript = {
   id: string
   filename: string
   segment_count: number
   created_at: string
+}
+
+type TeamDataStatus = {
+  hasData: boolean
+  counts: {
+    team_members: number
+    skills: number
+    capacity: number
+    preferences: number
+    history: number
+  }
 }
 
 export default function LandingPage() {
@@ -31,23 +42,24 @@ export default function LandingPage() {
   const [isUploading, setIsUploading] = useState(false)
   const [savedTranscripts, setSavedTranscripts] = useState<SavedTranscript[]>([])
   const [isLoadingTranscripts, setIsLoadingTranscripts] = useState(true)
+  const [teamDataStatus, setTeamDataStatus] = useState<TeamDataStatus | null>(null)
+  const [isLoadingTeamStatus, setIsLoadingTeamStatus] = useState(true)
 
   useEffect(() => {
-    fetchSavedTranscripts()
+    fetchSavedTranscripts(setSavedTranscripts, setIsLoadingTranscripts)
+    fetchTeamDataStatus()
   }, [])
 
-  const fetchSavedTranscripts = async () => {
+  const fetchTeamDataStatus = async () => {
     try {
-      const response = await fetch("/api/transcripts")
+      const response = await fetch("/api/team-data/status")
       const data = await response.json()
-
-      if (data.transcripts) {
-        setSavedTranscripts(data.transcripts)
-      }
+      setTeamDataStatus(data)
+      console.log("[v0] Team data status loaded:", data)
     } catch (error) {
-      console.error("[v0] Error fetching transcripts:", error)
+      console.error("[v0] Error fetching team data status:", error)
     } finally {
-      setIsLoadingTranscripts(false)
+      setIsLoadingTeamStatus(false)
     }
   }
 
@@ -90,7 +102,7 @@ export default function LandingPage() {
       toast.success(`Successfully uploaded ${file.name} with ${segments.length} segments`)
 
       // Refresh the list
-      await fetchSavedTranscripts()
+      await fetchSavedTranscripts(setSavedTranscripts, setIsLoadingTranscripts)
     } catch (error) {
       console.error("[v0] Error parsing file:", error)
       toast.error("Failed to parse or save transcript file")
@@ -137,7 +149,7 @@ export default function LandingPage() {
       if (!response.ok) throw new Error("Failed to delete")
 
       toast.success(`Deleted ${filename}`)
-      await fetchSavedTranscripts()
+      await fetchSavedTranscripts(setSavedTranscripts, setIsLoadingTranscripts)
     } catch (error) {
       console.error("[v0] Error deleting transcript:", error)
       toast.error("Failed to delete transcript")
@@ -188,6 +200,53 @@ export default function LandingPage() {
           Upload meeting transcripts and let AI suggest optimal story owners
         </p>
       </div>
+
+      {!isLoadingTeamStatus && (
+        <Card className="mb-6 rounded-2xl overflow-hidden">
+          {teamDataStatus?.hasData ? (
+            <div className="flex items-start gap-4 p-4 bg-green-50 dark:bg-green-950 border border-green-200 dark:border-green-800">
+              <Database className="h-5 w-5 text-green-600 dark:text-green-400 mt-0.5 flex-shrink-0" />
+              <div className="flex-1">
+                <p className="font-medium text-green-900 dark:text-green-100 mb-1">Team Data Loaded</p>
+                <p className="text-sm text-green-700 dark:text-green-300 mb-2">
+                  AI will use your CSV data for intelligent story assignments: {teamDataStatus.counts.team_members}{" "}
+                  members, {teamDataStatus.counts.skills} skills, {teamDataStatus.counts.capacity} capacity records,{" "}
+                  {teamDataStatus.counts.preferences} preferences, {teamDataStatus.counts.history} history entries
+                </p>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => router.push("/setup")}
+                  className="text-green-700 dark:text-green-300 h-auto p-0 hover:bg-transparent"
+                >
+                  Update team data
+                  <ExternalLink className="h-3 w-3 ml-1" />
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <div className="flex items-start gap-4 p-4 bg-amber-50 dark:bg-amber-950 border border-amber-200 dark:border-amber-800">
+              <Database className="h-5 w-5 text-amber-600 dark:text-amber-400 mt-0.5 flex-shrink-0" />
+              <div className="flex-1">
+                <p className="font-medium text-amber-900 dark:text-amber-100 mb-1">No Team Data Found</p>
+                <p className="text-sm text-amber-700 dark:text-amber-300 mb-2">
+                  Upload your team CSV files to enable AI-powered story assignments based on skills, capacity,
+                  preferences, and history.
+                </p>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => router.push("/setup")}
+                  className="text-amber-700 dark:text-amber-300 h-auto p-0 hover:bg-transparent"
+                >
+                  Go to Team Setup
+                  <ExternalLink className="h-3 w-3 ml-1" />
+                </Button>
+              </div>
+            </div>
+          )}
+        </Card>
+      )}
 
       <div className="grid lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2 space-y-6">

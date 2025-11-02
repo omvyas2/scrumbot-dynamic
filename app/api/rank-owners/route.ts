@@ -1,8 +1,12 @@
 import { type NextRequest, NextResponse } from "next/server"
 import { generateText } from "ai"
-import { groq } from "@ai-sdk/groq"
+import { createGroq } from "@ai-sdk/groq"
 import type { Member, Suggestion } from "@/types"
 import { createClient } from "@/lib/supabase/server"
+
+const groq = createGroq({
+  apiKey: process.env.API_KEY_GROQ_API_KEY || process.env.GROQ_API_KEY,
+})
 
 export async function POST(request: NextRequest) {
   try {
@@ -17,32 +21,188 @@ export async function POST(request: NextRequest) {
     }
 
     console.log(`[v0] Ranking ${members.length} members for story: ${story.iWant.substring(0, 50)}...`)
+    console.log(
+      "[v0] Member IDs being queried:",
+      members.map((m: Member) => m.id),
+    )
+    console.log(
+      "[v0] Member names being queried:",
+      members.map((m: Member) => m.name),
+    )
 
     const supabase = await createClient()
     const memberIds = members.map((m: Member) => m.id)
+    const memberNames = members.map((m: Member) => m.name)
 
     let enhancedMemberContext = ""
+    let csvDataUsed = false
 
     try {
+      console.log("[v0] Querying Supabase for CSV team data...")
+
+      const { data: allMembers, error: membersError } = await supabase
+        .from("team_members")
+        .select("member_id, name, role")
+
+      if (membersError) {
+        console.error("[v0] Error fetching team members:", membersError)
+      } else {
+        console.log(
+          "[v0] Available members in database:",
+          allMembers?.map((m) => ({ id: m.member_id, name: m.name })),
+        )
+      }
+
       const [skillsResult, capacityResult, preferencesResult, historyResult] = await Promise.all([
-        supabase.from("member_skills").select("*").in("member_id", memberIds),
-        supabase.from("member_capacity").select("*").in("member_id", memberIds),
-        supabase.from("member_preferences").select("*").in("member_id", memberIds),
-        supabase.from("story_history").select("*").in("member_id", memberIds),
+        supabase
+          .from("member_skills")
+          .select("*")
+          .or(`member_id.in.(${memberIds.join(",")})`),
+        supabase
+          .from("member_capacity")
+          .select("*")
+          .or(`member_id.in.(${memberIds.join(",")})`),
+        supabase
+          .from("member_preferences")
+          .select("*")
+          .or(`member_id.in.(${memberIds.join(",")})`),
+        supabase
+          .from("story_history")
+          .select("*")
+          .or(`member_id.in.(${memberIds.join(",")})`),
       ])
 
-      // Build enhanced context with CSV data
-      if (
-        !skillsResult.error &&
-        !capacityResult.error &&
-        !preferencesResult.error &&
-        !historyResult.error &&
+      if (skillsResult.error) console.error("[v0] Skills query error:", skillsResult.error)
+      if (capacityResult.error) console.error("[v0] Capacity query error:", capacityResult.error)
+      if (preferencesResult.error) console.error("[v0] Preferences query error:", preferencesResult.error)
+      if (historyResult.error) console.error("[v0] History query error:", historyResult.error)
+
+      console.log("[v0] Supabase query results:", {
+        skills: skillsResult.data?.length || 0,
+        capacity: capacityResult.data?.length || 0,
+        preferences: preferencesResult.data?.length || 0,
+        history: historyResult.data?.length || 0,
+      })
+
+      if ((!skillsResult.data || skillsResult.data.length === 0) && allMembers && allMembers.length > 0) {
+        console.log("[v0] No matches by ID, attempting to match by name...")
+
+        // Create a mapping of transcript names to database member_ids
+        const nameToIdMap = new Map<string, string>()
+        members.forEach((m: Member) => {
+          const dbMember = allMembers.find((dbm) => dbm.name.toLowerCase() === m.name.toLowerCase())
+          if (dbMember) {
+            nameToIdMap.set(m.id, dbMember.member_id)
+            console.log(
+              `[v0] Mapped transcript member "${m.name}" (${m.id}) to database member_id: ${dbMember.member_id}`,
+            )
+          }
+        })
+
+        if (nameToIdMap.size > 0) {
+          const dbMemberIds = Array.from(nameToIdMap.values())
+          console.log("[v0] Retrying queries with mapped member IDs:", dbMemberIds)
+
+          const [skillsResult2, capacityResult2, preferencesResult2, historyResult2] = await Promise.all([
+            supabase.from("member_skills").select("*").in("member_id", dbMemberIds),
+            supabase.from("member_capacity").select("*").in("member_id", dbMemberIds),
+            supabase.from("member_preferences").select("*").in("member_id", dbMemberIds),
+            supabase.from("story_history").select("*").in("member_id", dbMemberIds),
+          ])
+
+          console.log("[v0] Retry query results:", {
+            skills: skillsResult2.data?.length || 0,
+            capacity: capacityResult2.data?.length || 0,
+            preferences: preferencesResult2.data?.length || 0,
+            history: historyResult2.data?.length || 0,
+          })
+
+          // Use the retry results and update member references
+          if (skillsResult2.data || capacityResult2.data || preferencesResult2.data || historyResult2.data) {
+            skillsResult.data = skillsResult2.data || []
+            capacityResult.data = capacityResult2.data || []
+            preferencesResult.data = preferencesResult2.data || []
+            historyResult.data = historyResult2.data || []
+
+            // Build enhanced context with mapped IDs
+            if (
+              skillsResult.data.length > 0 ||
+              capacityResult.data.length > 0 ||
+              preferencesResult.data.length > 0 ||
+              historyResult.data.length > 0
+            ) {
+              csvDataUsed = true
+              enhancedMemberContext = "\n\n=== ADDITIONAL TEAM DATA FROM CSV FILES (PRIORITIZE THIS DATA) ===\n"
+
+              members.forEach((m: Member) => {
+                const dbMemberId = nameToIdMap.get(m.id)
+                if (!dbMemberId) return
+
+                const memberSkills = skillsResult.data.filter((s) => s.member_id === dbMemberId)
+                const memberCapacities = capacityResult.data.filter((c) => c.member_id === dbMemberId)
+                const memberPrefs = preferencesResult.data.filter((p) => p.member_id === dbMemberId)
+                const memberHistory = historyResult.data.filter((h) => h.member_id === dbMemberId)
+
+                if (
+                  memberSkills.length > 0 ||
+                  memberCapacities.length > 0 ||
+                  memberPrefs.length > 0 ||
+                  memberHistory.length > 0
+                ) {
+                  enhancedMemberContext += `\n${m.name} (Database ID: ${dbMemberId}):\n`
+
+                  if (memberSkills.length > 0) {
+                    enhancedMemberContext += `  CSV Skills: ${memberSkills
+                      .map((s) => {
+                        let skillStr = `${s.skill}:${s.level}/10`
+                        if (s.last_used) skillStr += ` (last used: ${s.last_used})`
+                        return skillStr
+                      })
+                      .join(", ")}\n`
+                  }
+
+                  if (memberCapacities.length > 0) {
+                    memberCapacities.forEach((cap) => {
+                      enhancedMemberContext += `  CSV Capacity (${cap.sprint_id}): ${cap.hours_available}h available\n`
+                    })
+                  }
+
+                  if (memberPrefs.length > 0) {
+                    const learningGoals = memberPrefs.map((p) => p.wants_to_learn)
+                    enhancedMemberContext += `  CSV Learning Goals: ${learningGoals.join(", ")}\n`
+                  }
+
+                  if (memberHistory.length > 0) {
+                    enhancedMemberContext += `  CSV Story History:\n`
+                    memberHistory.forEach((h) => {
+                      enhancedMemberContext += `    - Story ${h.story_id}: ${h.outcome} in ${h.cycle_time_days} days`
+                      if (h.tags && h.tags.length > 0) {
+                        enhancedMemberContext += ` [tags: ${h.tags.join(", ")}]`
+                      }
+                      if (h.quality_notes) {
+                        enhancedMemberContext += ` - ${h.quality_notes}`
+                      }
+                      enhancedMemberContext += `\n`
+                    })
+                  }
+                }
+              })
+
+              console.log("[v0] ✅ Enhanced context with CSV data from Supabase (matched by name)")
+              console.log("[v0] CSV context preview:", enhancedMemberContext.substring(0, 500))
+            }
+          }
+        }
+      } else if (
+        skillsResult.data &&
         (skillsResult.data.length > 0 ||
           capacityResult.data.length > 0 ||
           preferencesResult.data.length > 0 ||
           historyResult.data.length > 0)
       ) {
-        enhancedMemberContext = "\n\n=== ADDITIONAL TEAM DATA FROM CSV FILES ===\n"
+        // Original logic for direct ID matches
+        csvDataUsed = true
+        enhancedMemberContext = "\n\n=== ADDITIONAL TEAM DATA FROM CSV FILES (PRIORITIZE THIS DATA) ===\n"
 
         members.forEach((m: Member) => {
           const memberSkills = skillsResult.data.filter((s) => s.member_id === m.id)
@@ -95,12 +255,19 @@ export async function POST(request: NextRequest) {
           }
         })
 
-        console.log("[v0] Enhanced context with CSV data from Supabase")
-      } else {
-        console.log("[v0] No CSV data found in Supabase, using transcript-based data only")
+        console.log("[v0] ✅ Enhanced context with CSV data from Supabase")
+        console.log("[v0] CSV context preview:", enhancedMemberContext.substring(0, 500))
+      }
+
+      if (!csvDataUsed) {
+        console.log("[v0] ⚠️ No CSV data found in Supabase, using transcript-based data only")
+        console.log("[v0] Possible reasons:")
+        console.log("[v0]   1. CSV files haven't been uploaded to /setup")
+        console.log("[v0]   2. Member IDs in CSV don't match transcript member IDs")
+        console.log("[v0]   3. Database tables are empty")
       }
     } catch (dbError) {
-      console.warn("[v0] Could not fetch CSV data from Supabase:", dbError)
+      console.error("[v0] ❌ Could not fetch CSV data from Supabase:", dbError)
       console.log("[v0] Continuing with transcript-based data only")
     }
 
@@ -148,7 +315,7 @@ ${enhancedMemberContext}
 
 ${storyContext}
 
-IMPORTANT: When CSV data is available, prioritize it over transcript data as it's more accurate and detailed. Use CSV skills, capacity, preferences, and history to make better recommendations.
+${csvDataUsed ? "⚠️ CRITICAL: CSV data is available above and MUST be prioritized over transcript data. Use CSV skills (rated /10), capacity, preferences, and history to make accurate recommendations. The CSV data is more detailed and reliable." : "Note: Only transcript data is available. Make recommendations based on the information provided."}
 
 OUTPUT FORMAT (JSON array):
 [
@@ -168,12 +335,13 @@ CRITICAL INSTRUCTIONS:
 - Score ALL ${members.length} members in the response
 - Provide 2-5 specific, actionable justifications per member
 - Base scores on the story requirements and member profiles
+- ${csvDataUsed ? "PRIORITIZE CSV data when making scoring decisions" : ""}
 - Return ONLY a valid JSON array. No markdown, no explanations, no extra text.`,
       temperature: 0.3,
       maxTokens: 2000,
     })
 
-    console.log("[v0] AI ranking response received, processing...")
+    console.log(`[v0] AI ranking response received (CSV data used: ${csvDataUsed}), processing...`)
 
     let rankings: Array<{
       memberId: string

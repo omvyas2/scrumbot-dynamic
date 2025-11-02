@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { Upload, CheckCircle2, AlertCircle, Database } from "lucide-react"
+import { Upload, CheckCircle2, AlertCircle, Database, Table } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { Label } from "@/components/ui/label"
@@ -14,6 +14,7 @@ interface UploadStatus {
   status: "pending" | "uploading" | "success" | "error"
   message?: string
   rowCount?: number
+  schema?: { headers: string[]; sampleRows: string[][] }
 }
 
 const CSV_TYPES: { type: CSVType; label: string; description: string }[] = [
@@ -43,6 +44,14 @@ export default function SetupPage() {
     ),
   )
 
+  const [expandedSchemas, setExpandedSchemas] = useState<Record<CSVType, boolean>>({
+    team_members: false,
+    skills: false,
+    capacity: false,
+    preferences: false,
+    history: false,
+  })
+
   const handleFileUpload = async (type: CSVType, file: File) => {
     setUploadStatuses((prev) => ({
       ...prev,
@@ -50,6 +59,11 @@ export default function SetupPage() {
     }))
 
     try {
+      const content = await file.text()
+      const lines = content.trim().split("\n")
+      const headers = lines[0].split(",").map((h) => h.trim())
+      const sampleRows = lines.slice(1, 4).map((line) => line.split(",").map((cell) => cell.trim()))
+
       const formData = new FormData()
       formData.append("file", file)
       formData.append("type", type)
@@ -72,6 +86,7 @@ export default function SetupPage() {
           status: "success",
           message: `Successfully imported ${data.rowCount} rows`,
           rowCount: data.rowCount,
+          schema: { headers, sampleRows },
         },
       }))
 
@@ -116,6 +131,7 @@ export default function SetupPage() {
         <div className="space-y-6">
           {CSV_TYPES.map(({ type, label, description }) => {
             const status = uploadStatuses[type]
+            const isExpanded = expandedSchemas[type]
             return (
               <div key={type} className="border rounded-lg p-4">
                 <div className="flex items-start justify-between gap-4 mb-3">
@@ -140,6 +156,60 @@ export default function SetupPage() {
                 {status.status === "error" && status.message && (
                   <div className="mb-3 p-2 bg-destructive/10 border border-destructive/20 rounded text-sm text-destructive">
                     {status.message}
+                  </div>
+                )}
+
+                {status.status === "success" && status.schema && (
+                  <div className="mb-3">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() =>
+                        setExpandedSchemas((prev) => ({
+                          ...prev,
+                          [type]: !prev[type],
+                        }))
+                      }
+                      className="text-xs mb-2"
+                    >
+                      <Table className="h-3 w-3 mr-1" />
+                      {isExpanded ? "Hide" : "View"} Schema Preview
+                    </Button>
+
+                    {isExpanded && (
+                      <div className="border rounded-lg overflow-hidden bg-muted/30">
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-xs">
+                            <thead>
+                              <tr className="bg-muted">
+                                {status.schema.headers.map((header, idx) => (
+                                  <th key={idx} className="px-3 py-2 text-left font-semibold border-r last:border-r-0">
+                                    {header}
+                                  </th>
+                                ))}
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {status.schema.sampleRows.map((row, rowIdx) => (
+                                <tr key={rowIdx} className="border-t">
+                                  {row.map((cell, cellIdx) => (
+                                    <td
+                                      key={cellIdx}
+                                      className="px-3 py-2 border-r last:border-r-0 text-muted-foreground"
+                                    >
+                                      {cell.length > 30 ? `${cell.substring(0, 30)}...` : cell}
+                                    </td>
+                                  ))}
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                        <div className="px-3 py-2 bg-muted/50 text-xs text-muted-foreground border-t">
+                          Showing first 3 rows of {status.rowCount} total rows
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
 

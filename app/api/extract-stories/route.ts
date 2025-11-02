@@ -1,7 +1,11 @@
 import { type NextRequest, NextResponse } from "next/server"
 import { generateText } from "ai"
-import { groq } from "@ai-sdk/groq"
+import { createGroq } from "@ai-sdk/groq"
 import type { TranscriptSegment, Story } from "@/types"
+
+const groq = createGroq({
+  apiKey: process.env.API_KEY_GROQ_API_KEY || process.env.GROQ_API_KEY,
+})
 
 export async function POST(request: NextRequest) {
   try {
@@ -23,7 +27,7 @@ export async function POST(request: NextRequest) {
       .join("\n")
 
     const { text } = await generateText({
-      model: groq("llama-3.1-8b-instant"), // Faster model with lower token usage
+      model: groq("llama-3.1-8b-instant"),
       prompt: `You are an expert Scrum Master analyzing sprint planning meetings. Extract user stories from the transcript.
 
 REQUIREMENTS:
@@ -65,7 +69,7 @@ ${transcriptText}
 
 Return ONLY valid JSON array. No markdown, no extra text.`,
       temperature: 0.3,
-      maxTokens: 3000, // Reduced token limit
+      maxTokens: 3000,
     })
 
     console.log("[v0] AI response received, parsing...")
