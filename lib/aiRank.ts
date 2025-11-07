@@ -174,10 +174,9 @@ export async function generateStoriesWithSuggestionsAI(
         assignedTo: undefined,
       } as StoryWithSuggestions)
 
-      // Add a small delay between requests to avoid hitting rate limits
       // Skip delay after the last story
       if (i < stories.length - 1) {
-        const delayMs = 1500 // 1.5 second delay between requests
+        const delayMs = 30000 // 30 second delay between requests to avoid rate limits
         console.log(`[v0] Waiting ${delayMs}ms before next story...`)
         await new Promise((resolve) => setTimeout(resolve, delayMs))
       }

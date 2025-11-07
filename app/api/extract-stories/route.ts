@@ -28,48 +28,40 @@ export async function POST(request: NextRequest) {
 
     const { text } = await generateText({
       model: groq("llama-3.1-8b-instant"),
-      prompt: `You are an expert Scrum Master analyzing sprint planning meetings. Extract user stories from the transcript.
+      prompt: `You are an expert Scrum Master. Extract ALL user stories discussed in this sprint planning meeting.
 
-REQUIREMENTS:
-1. Extract complete user stories with "As a / I want / So that" format
-2. Include context: risks, action items, evidence, labels
-3. Use exact timestamps and quotes from transcript
-4. Estimate story points (1,2,3,5,8,13,21)
+CRITICAL: Extract EVERY story mentioned. Look for:
+- Feature requests
+- Bug fixes
+- Technical improvements
+- Design changes
+- Infrastructure work
+- Any work item discussed
 
-OUTPUT FORMAT (JSON array):
-[
-  {
-    "asA": "role/persona",
-    "iWant": "feature description",
-    "soThat": "business value",
-    "risks": ["risk 1", "risk 2"],
-    "actionItems": ["action 1", "action 2"],
-    "labels": ["frontend", "backend", etc.],
-    "evidence": [
-      {
-        "timestamp": "00:01:23.456",
-        "speaker": "Speaker Name",
-        "quote": "exact quote"
-      }
-    ],
-    "estimate": 8
-  }
-]
+FORMAT each story as:
+{
+  "asA": "user role",
+  "iWant": "what they want",
+  "soThat": "the benefit",
+  "risks": ["list risks mentioned"],
+  "actionItems": ["list action items"],
+  "labels": ["tag by type: frontend/backend/api/database/security/performance/ui/ux"],
+  "evidence": [{"timestamp": "HH:MM:SS", "speaker": "name", "quote": "exact text"}],
+  "estimate": 5
+}
 
-ESTIMATION:
-- 1-2: Simple, <4 hours
-- 3-5: Medium, 1-2 days
-- 8-13: Complex, 3-5 days
-- 21: Epic, needs breakdown
-
-LABELS: frontend, backend, api, database, security, performance, etc.
+ESTIMATION GUIDE:
+1-2 points: <4 hours (quick fix, simple change)
+3-5 points: 1-2 days (standard feature)
+8-13 points: 3-5 days (complex feature)
+21 points: >1 week (needs breakdown)
 
 TRANSCRIPT:
 ${transcriptText}
 
-Return ONLY valid JSON array. No markdown, no extra text.`,
-      temperature: 0.3,
-      maxTokens: 3000,
+Return ONLY a JSON array with ALL stories. Extract at least 3-5 stories if they exist in the transcript.`,
+      temperature: 0.2,
+      maxTokens: 4000,
     })
 
     console.log("[v0] AI response received, parsing...")
