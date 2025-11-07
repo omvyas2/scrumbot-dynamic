@@ -22,7 +22,7 @@ ScrumBot converts meeting transcripts into structured Scrum artifacts and uses A
    \`\`\`
 
 2. **Set up environment variables**:
-   The Groq API key is already configured in `.env.local`. If you need to change it, update:
+   The Groq API key is already configured in `environment.env`. If you need to change it, update:
    \`\`\`
    GROQ_API_KEY=your_groq_api_key_here
    \`\`\`
